@@ -1,5 +1,37 @@
 ################################################################################
+################################################################################
+################################### Flopsy #####################################
+################################################################################
+################################################################################
+#
+# A program for playing music using flopy drives using a PIC32.
+#
+################################################################################
 ################################### Licences ###################################
+################################################################################
+#
+# The MIT License (MIT)
+#
+# Copyright (c) 2014 Erik Madson
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
 ################################################################################
 #
 # For the sin, cos, and arctan routines
@@ -20,6 +52,8 @@
 #
 ## These are mostly to myself and are here in case I need to update anything ###
 #
+# This code was written for the PIC32MX340F512H.
+# If using anything other than the PIC32MX340F512H may require modification.
 # for simplicity only move $sp in multiples of 8 since doubles are on the stack
 # cos_lookup overlaps sin_lookup so make sure they are contiguous
 # make sure that any data that depends on a starting value is not altered
@@ -161,6 +195,26 @@ print_loop:
     b print_loop
     addiu $t0, $t0, 8
 ender:
+    li $t0, 1
+    mtc1 $t0, $f0
+    cvt.d.w $f0, $f0
+    sdc1 $f0, ($sp)
+    li $t0, 1
+    mtc1 $t0, $f0
+    cvt.d.w $f0, $f0
+    sdc1 $f0, 8($sp)
+    jal cordic_rectangular_to_polar
+    nop
+    ldc1 $f12, ($sp)
+    li $v0, 3
+    syscall
+    li $v0, 4
+    syscall
+    ldc1 $f12, 8($sp)
+    li $v0, 3
+    syscall
+    li $v0, 4
+    syscall
 
 # restore the stack to its previous position
     la $t1, stack_offset
@@ -469,58 +523,77 @@ trig_lookup_end:
     nop
 
 ################################################################################
-# Uses
-# input:
-# output:
-# 
+# Uses $t0, $t1, $t2, $t3, $f0, $f1, $f2, $f3, $f4, $f5, $f6, $f7, $f8, $f9,
+# $f10, $f11
+# input: two doubles on the stack, x at $sp and y at $sp+8
+# output: two doubles on the stack, r at $sp and theta at $sp+8
+# Increasing CORDIC_ITERATIONS increases the accuracy of this routine
 ################################################################################
 cordic_rectangular_to_polar:
-    ldc1 $f6, ($sp)
+    ldc1 $f0, ($sp)
     ldc1 $f2, 8($sp)
-    la $t0, arctan_lookup
+    la $t0, arctan_lookup - 8
     la $t1, pi_constant
-    ldc1 $f4, -8($t4)
-    ldc1 $f0, -8($t4)
-    c.lt.d $f2, $f0
+    ldc1 $f4, ($t0)
+    ldc1 $f6, ($t0)
+    c.lt.d $f2, $f6
     bc1f cordic_check_x
     nop
-    neg.d $f6, $f6
+    neg.d $f0, $f0
     neg.d $f2, $f2
     ldc1 $f4, ($t1)
 cordic_check_x:
-    c.lt.d $f6, $f0
+    c.lt.d $f0, $f6
     bc1f cordic_argument_reduced
     nop
-    mov.d $f0, $f2
-    neg.d $f2, $f6
-    ldc1 $f6, 8($t1)
-    add.d $f4, $f4, $f6
+    mov.d $f8, $f2
+    neg.d $f2, $f0
+    mov.d $f0, $f8
+    ldc1 $f8, 8($t1)
+    add.d $f4, $f4, $f8
 cordic_argument_reduced:
-    
-/*
-		for(int i = 0; i < CORDIC_ITERATIONS; i++)
-		{
-			double temp;
-			if(y > 0)
-			{
-				temp = x + y / (1 << i);
-				y -= x / (1 << i);
-				x = temp;
-				angle += alt[i];
-			}
-			else
-			{
-				temp = y + x / (1 << i);
-				x -= y / (1 << i);
-				y = temp;
-				angle -= alt[i];
-			}
-		}
+    li $t1, 0
+    li $t2, CORDIC_ITERATIONS
+    li $t3, 1
+cordic_loop:
+    bge $t1, $t2, cordic_end
+    c.le.d $f6, $f2
+    bc1f cordic_loop_negative_y
+    addiu $t0, $t0, 8
+    mtc1 $t3, $f8
+    cvt.d.w $f8, $f8
+    div.d $f10, $f2, $f8
+    add.d $f10, $f10, $f0
+    div.d $f0, $f0, $f8
+    sub.d $f2, $f2, $f0
+    mov.d $f0, $f10
+    ldc1 $f10, ($t0)
+    add.d $f4, $f4, $f10
+    sll $t3, $t3, 1
+    b cordic_loop
+    addiu $t1, $t1, 1
+cordic_loop_negative_y:
+    mtc1 $t3, $f8
+    cvt.d.w $f8, $f8
+    div.d $f10, $f0, $f8
+    add.d $f10, $f10, $f2
+    div.d $f2, $f2, $f8
+    sub.d $f0, $f0, $f2
+    mov.d $f2, $f10
+    ldc1 $f10, ($t0)
+    sub.d $f4, $f4, $f10
+    sll $t3, $t3, 1
+    b cordic_loop
+    addiu $t1, $t1, 1
+cordic_end:
+    la $t0, cordic_gain
+    ldc1 $f2, ($t0)
+    mul.d $f0, $f0, $f2
+    sdc1 $f0, ($sp)
+    sdc1 $f4, 8($sp)
+    jr $ra
+    nop
 
-		x *= CORDIC_CORRECTION;
-
-		return new double[]{x, angle};
-*/
 ################################################################################
 #################################### Data ######################################
 ################################################################################
