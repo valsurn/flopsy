@@ -54,7 +54,7 @@
 #
 # Number of iterations for the CORDIC algorithm for determining magnitude and
 # phase displacement (the higher the number, the better the accuracy)
-# Assumed to be less than 32 (and greater than 0)
+# Assumed to be greater than 0 and less than or equal to 30
     .equ CORDIC_ITERATIONS, 15
 #
 ######## These should not be changed unless you know what you're doing #########
@@ -73,7 +73,13 @@
 # N_EXPONENT = floor(log2(N)) (for integers within the acceptable range of N)
 #
 ################################################################################
-############################## Program #########################################
+################################## Includes ####################################
+################################################################################
+#
+   .include "trig_lookup.s"
+#
+################################################################################
+################################### Program ####################################
 ################################################################################
     .text
     .globl main
@@ -101,7 +107,7 @@ main:
 # output: magnetude and angle on the stack (($sp+4) = mag and ($sp) = angle)
 # x and y are signed words
 # magnetude is an unsigned word and is on the same scale as the inputs
-# angle is a word (signed or unsigned) where 2^32 ulp = 2 pi radians
+# angle is a word (signed or unsigned) where 2^32 = 2 pi radians
 ################################################################################
 cordic_rectangular_to_polar:
     lw $t1, ($sp)               # $t1=y
@@ -127,7 +133,7 @@ cordic_rectangular_to_polar_loop_init:
     clz $t6, $t6
     sllv $t0, $t0, $t6
 # shift x and y right 1 and divide by the CORDIC gain (to prevent overflow)
-    li $t7, 1304065748
+    li $t7, HALF_INVERSE_CORDIC_GAIN
     multu $t0, $t7
     sllv $t1, $t1, $t6          # (multiply delay (?))
     mfhi $t0
@@ -177,4 +183,3 @@ fft:
 #################################### Data ######################################
 ################################################################################
     .data
-    .include "trig_lookup.s"
