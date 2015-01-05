@@ -50,7 +50,7 @@
 #
 # Number of samples per FFT. Assumed to be a power of 2 greater than or equal to
 # 8 and less than or equal to 16384 (pick the highest value that won't lag)
-    .equ N, 1024
+    .equ N, 32
 #
 # Number of iterations for the CORDIC algorithm for determining magnitude and
 # phase displacement (the higher the number, the better the accuracy)
@@ -168,18 +168,18 @@ main_angle_erase:
 
 ################################################################################
 # fft
-# takes the array (N words long) pointed to by sample_array_pointer and returns
-# an interleaved array (2N words long) containing the magntude and phase angle
-# of each frequency. Each phase angle is a word (signed or unsigned) where 2^32
-# is 2 pi radians
-# Assumes the samples are unsigned.
+# takes 4 arrays (N / 4 words long) pointed to by sample_array_pointer_0,
+# sample_array_pointer_1, sample_array_pointer_2, and sample_array_pointer_3 and
+# returns an interleaved array (2N words long) containing the magntude and phase
+# angle of each frequency. Each phase angle is a word (signed or unsigned) where
+# 2^32 is 2 pi radians. Assumes the samples are unsigned.
 # uses: $t0, $t1, $t2, $t3, $t4, $t5, $t6, $t7, $t8, $t9, $a0, $a1, $a2, $a3
 #       ($s0, $s1, $s2, $s3, $s4, $s5, %s6, %s7 are used, but preserved)
 # input: values in max_fft_shift, sample_array_pointer, and samples in the array
 # output: fft_array will contain the magnetude and phase of each frequency
 ################################################################################
 fft:
-    addiu $sp, $sp, -32
+    addiu $sp, $sp, -32             # push the s registers to the stack
     sw $s0, ($sp)
     sw $s1, 4($sp)
     sw $s2, 8($sp)
@@ -188,36 +188,36 @@ fft:
     sw $s5, 20($sp)
     sw $s6, 24($sp)
     sw $s7, 28($sp)
-    la $s0, max_fft_shift
-    lw $s0, ($s0)
-    la $t1, sample_array_pointer_3    # (load delay)
-    lw $t1, ($t1)
-    la $s2, fft_array               # (load delay)
-    li $t3, 4 * N
-    li $t8, 4
-    li $t7, 3 * N
+    la $s0, max_fft_shift           # contains the number of shifts to increase
+    lw $s0, ($s0)                   # the resolution when multiplying
+    la $t1, sample_array_pointer_3  # (load delay)
+    lw $t1, ($t1)                   # load the address of the first sample array
+    la $s2, fft_array               # address of the output array (load delay)
+    li $t3, 4 * N                   # $t3 is the virtual input index + 1 word
+    li $t8, 4                       # $t8 is the output index (bit reversed)
+    li $t7, 3 * N                   # $t7 is the final index for this array
 fft_transfer_loop_0:
     addiu $t9, $t3, -4
-    addu $t4, $t1, $t9
-    lw $t6, -3*N($t4)
-    xor $s1, $t3, $t9
-    clz $s3, $s1
-    addiu $s3, $s3, N_EXPONENT - 29
-    sllv $s1, $s1, $s3
-    xor $t8, $t8, $s1
-    addu $t5, $s2, $t8
-    sllv $t6, $t6, $s0
-    sw $t6, ($t5)
-    sw $0, 4($t5)
-    bne $t7, $t9, fft_transfer_loop_0
-    addiu $t3, $t3, -4              # (branch delay)
-    la $t1, sample_array_pointer_2
+    addu $t4, $t1, $t9              # address of the element + $t7
+    lw $t6, -3*N($t4)               # load current element into $t6 (minus $t7)
+    xor $s1, $t3, $t9               # $s1 = i ^ (i + 1) (always contiguous 1s)
+    clz $s3, $s1                    # get the leading zeros
+    addiu $s3, $s3, N_EXPONENT - 29 # N_EXPONENT for the size, 3 for the address
+    sllv $s1, $s1, $s3              # -32 for the word length, then shift
+    xor $t8, $t8, $s1               # xor the 1s onto the MSB side
+    addu $t5, $s2, $t8              # determine the output address (bit reverse)
+    sllv $t6, $t6, $s0              # shift for maximal resolution w/o overflow
+    sw $t6, ($t5)                   # store the value in the real index
+    sw $0, 4($t5)                   # store a zero in the imaginary index
+    bne $t7, $t9, fft_transfer_loop_0   # loop through this partial array
+    addiu $t3, $t3, -4              # decrement $t3 (branch delay)
+    la $t1, sample_array_pointer_2  # switch to the next sub array
     lw $t1, ($t1)
-    li $t7, 2 * N
+    li $t7, 2 * N                   # change the final index
 fft_transfer_loop_1:
     addiu $t9, $t3, -4
     addu $t4, $t1, $t9
-    lw $t6, -2*N($t4)
+    lw $t6, -2*N($t4)               # the offset is also changed here
     xor $s1, $t3, $t9
     clz $s3, $s1
     addiu $s3, $s3, N_EXPONENT - 29
@@ -248,11 +248,11 @@ fft_transfer_loop_2:
     bne $t7, $t9, fft_transfer_loop_2
     addiu $t3, $t3, -4              # (branch delay)
     la $t1, sample_array_pointer_0
-    lw $t1, ($t1)
+    lw $t1, ($t1)                   # $t7 no longer needed to track final ($0)
 fft_transfer_loop_3:
     addiu $t9, $t3, -4
     addu $t4, $t1, $t9
-    lw $t6, ($t4)
+    lw $t6, ($t4)                   # no offset required either
     xor $s1, $t3, $t9
     clz $s3, $s1
     addiu $s3, $s3, N_EXPONENT - 29
@@ -263,83 +263,84 @@ fft_transfer_loop_3:
     sw $t6, ($t5)
     sw $0, 4($t5)
     bne $0, $t9, fft_transfer_loop_3
-    addiu $t3, $t3, -4
-    la $t1, cos_lookup
-    li $t3, 2 * N
-    li $t5, 8
-    li $t6, N_EXPONENT - 1
-    li $s6, 8 * N
+    addiu $t3, $t3, -4              # array is populated after (branch delay)
+    la $t1, cos_lookup              # the pointer to the cosine lookup table
+    li $t3, 2 * N                   # $t3 = difference between lookup indecies
+    li $t5, 8                       # ammount to increment inner loop counter
+    li $t6, N_EXPONENT - 1          # outer loop counter
+    li $s6, 8 * N                   # inner loop maximum
 fft_outer_loop:
-    addu $t4, $t5, $0
-    sll $t5, $t5, 1
-    li $t8, 2 * N
-    addiu $t7, $t4, -8
+    addu $t4, $t5, $0               # move increment ammount to the index offset
+    sll $t5, $t5, 1                 # double the increment ammount
+    li $t8, 2 * N                   # $t8 = lookup index
+    addiu $t7, $t4, -8              # $t7 = middle loop counter
 fft_middle_loop:
-    subu $t8, $t8, $t3
-    beqz $t8, fft_inner_loop_last
-    addu $t9, $t7, $0   # (branch delay)
-    addu $t2, $t1, $t8
-    lw $t0, ($t2) # error here
-    lw $s1, N($t2)
+    subu $t8, $t8, $t3              # get next lookup index
+    beqz $t8, fft_inner_loop_last   # special case for when the index = 0
+    addu $t9, $t7, $0               # inner loop counter = middle (branch delay)
+    addu $t2, $t1, $t8              # address of the element in the lookup table
+    lw $t0, ($t2)                   # load the cosine value
+    lw $s1, N($t2)                  # load the sine value
 fft_inner_loop:
-    addu $a0, $s2, $t9
-    addu $a1, $a0, $t4
-    lw $s4, ($a1)
-    lw $s5, 4($a1)      # (load delay)
-    mult $t0, $s4       # (load delay)
-    lw $s3, 4($a0)      # (multiply delay)
-    msub $s1, $s5       # (load delay)
-    lw $t2, ($a0)       # (multiply delay)
-    mfhi $a2            # (load delay)
-    mflo $s7
-    sll $a2, $a2, 1
-    srl $s7, $s7, 30
-    mult $s1, $s4
-    addiu $s7, $s7, 1   # (multiply delay)
-    madd $t0, $s5
-    addu $a2, $a2, $s7  # (multiply delay)
-    mfhi $a3
-    mflo $s7
-    srl $s7, $s7, 30
-    addiu $s7, $s7, 1
-    srl $s7, $s7, 1
-    sll $a3, $a3, 1
-    addu $a3, $a3, $s7
-    subu $s7, $t2, $a2
-    sw $s7, ($a1)
-    subu $s7, $s3, $a3
-	sw $s7, 4($a1)
-	addu $s7, $t2, $a2
-    sw $s7, ($a0)
-    addu $s7, $s3, $a3
-    sw $s7, 4($a0)
-    blt $t9, $s6, fft_inner_loop
-    addu $t9, $t9, $t5  # (branch delay)
-    b fft_middle_loop
-    addiu $t7, $t7, -8  # (branch delay)
+    addu $a0, $s2, $t9              # adress of fft[index]
+    addu $a1, $a0, $t4              # adress of fft[index + offset]
+    lw $s4, ($a1)                   # load re(fft[index + offset])
+    lw $s5, 4($a1)                  # load im(fft[index + offset]) (load delay)
+    mult $t0, $s4                   # cos * re(fft[index + offset]) (load delay)
+    lw $s3, 4($a0)                  # load im(fft[index]) (multiply delay)
+    msub $s1, $s5                   # sin * im(fft[index + offset]) (load delay)
+    lw $t2, ($a0)                   # load re(fft[index]) (multiply delay)
+    mfhi $a2                        # $a2 = (cos*re-sin*im)/2 (load delay)
+    mflo $s7                        # $s7 = fractional part
+    sll $a2, $a2, 1                 # $a2 = cos*re-sin*im
+    srl $s7, $s7, 30                # two MSB of the fractional part
+    mult $s1, $s4                   # sin * re(fft[index])
+    addiu $s7, $s7, 1               # $s7 += 0.5 (multiply delay)
+    srl $s7, $s7, 1                 # 00 -> 0, 01 -> 1, 10 -> 1, 11 -> 2
+    madd $t0, $s5                   # cos * im(fft[index])
+    addu $a2, $a2, $s7              # round cos*re-sin*im (multiply delay)
+    mfhi $a3                        # $a3 = (sin*re+cos*im)/2
+    mflo $s7                        # $s7 = fractional part
+    srl $s7, $s7, 30                # two MSB of the fractional part
+    addiu $s7, $s7, 1               # $s7 += 0.5
+    srl $s7, $s7, 1                 # 00 -> 0, 01 -> 1, 10 -> 1, 11 -> 2
+    sll $a3, $a3, 1                 # $a3 = sin*re+cos*im
+    addu $a3, $a3, $s7              # round sin*re+cos*im
+    subu $s7, $t2, $a2              # re(fft[index]) - (cos*re-sin*im)
+    sw $s7, ($a1)                   # store the value
+    subu $s7, $s3, $a3              # im(fft[index]) - (sin*re+cos*im)
+    sw $s7, 4($a1)                  # store the value
+    addu $s7, $t2, $a2              # re(fft[index]) + (cos*re-sin*im)
+    sw $s7, ($a0)                   # store the value
+    addu $s7, $s3, $a3              # im(fft[index]) + (sin*re+cos*im)
+    addu $t9, $t9, $t5              # increment the inner loop counter
+    blt $t9, $s6, fft_inner_loop    # if inner loop counter < max value
+    sw $s7, 4($a0)                  # store the value (branch delay)
+    b fft_middle_loop               # branch back to the middle loop
+    addiu $t7, $t7, -8              # decrement middle loop count (branch delay)
 fft_inner_loop_last:
-    addu $a0, $s2, $t9
-    addu $a1, $a0, $t4
-    lw $s5, 4($a1)
-    lw $s4, ($a1)       # (load delay)
-    lw $t2, ($a0)       # (load delay)
-    lw $s3, 4($a0)      # (load delay)
-    subu $s7, $t2, $s4
+    addu $a0, $s2, $t9              # special case since cos = 1 & sin = 0
+    addu $a1, $a0, $t4              # 1 is too large to represent w/o changing
+    lw $s5, 4($a1)                  # the scale of the cos lookup table
+    lw $s4, ($a1)                   # (load delay)
+    lw $t2, ($a0)                   # (load delay)
+    lw $s3, 4($a0)                  # (load delay)
+    subu $s7, $t2, $s4              # (load delay)
     sw $s7, ($a1)
     subu $s7, $s3, $s5
     sw $s7, 4($a1)
     addu $s7, $t2, $s4
     sw $s7, ($a0)
     addu $s7, $s3, $s5
-    sw $s7, 4($a0)
+    addu $t9, $t9, $t5
     blt $t9, $s6, fft_inner_loop_last
-    addu $t9, $t9, $t5  # (branch delay)
-    srl $t3, $t3, 1
-    bne $0, $t6, fft_outer_loop
-    addiu $t6, $t6, -1  # (branch delay)
-    li $s1, 8 * (N - 1)
+    sw $s7, 4($a0)                  # (branch delay)
+    srl $t3, $t3, 1                 # halve the lookup index difference
+    bne $0, $t6, fft_outer_loop     # since this is always the last middle loop
+    addiu $t6, $t6, -1              # (branch delay)
+    li $s1, 8 * (N - 1)             # array index and loop counter
 fft_cordic_rectangular_to_polar_conversion_loop:
-    addu $s3, $s1, $s2
+    addu $s3, $s1, $s2          # load the data for the conversion
     lw $t1, 4($s3)
     lw $t0, ($s3)               # (load delay)
     bgez $t1, fft_cordic_rectangular_to_polar_check_x   # if y<0 (load delay)
@@ -400,12 +401,12 @@ fft_cordic_rectangular_to_polar_y_negative:
     subu $t3, $t3, $t8          # angle=angle-arctan(2^-i) (branch delay)
     srlv $t0, $t0, $t6          # shift x back to its original magnetude
 fft_cordic_rectangular_to_polar_end:
-    srlv $t0, $t0, $s0
-    sw $t0, ($s3)
-    sw $t3, 4($s3)
+    srlv $t0, $t0, $s0          # shift the value back to its proper magnetude
+    sw $t0, ($s3)               # store the magnetude back in the array
+    sw $t3, 4($s3)              # store the angle back in the array
     bne $0, $s1, fft_cordic_rectangular_to_polar_conversion_loop
     addiu $s1, $s1, -8
-    lw $s0, ($sp)
+    lw $s0, ($sp)               # pop the s registers back
     lw $s1, 4($sp)
     lw $s2, 8($sp)
     lw $s3, 12($sp)
@@ -413,7 +414,7 @@ fft_cordic_rectangular_to_polar_end:
     lw $s5, 20($sp)
     lw $s6, 24($sp)
     lw $s7, 28($sp)
-    jr $ra
+    jr $ra                      # return
     addiu $sp, $sp, 32
 
 ################################################################################
@@ -421,6 +422,8 @@ fft_cordic_rectangular_to_polar_end:
 ################################################################################
     .data
     .align 2
+max_fft_shift:
+    .word 15
 sample_index:
     .space 4
 sample_array_pointer_0:
@@ -444,87 +447,6 @@ sample_array_4:
 fft_array:
     .space FFT_SPACE
 test_array:
-    .word 2522, 2532, 2542, 2552, 2562, 2572, 2581, 2591, 2601, 2610, 2620, 2629
-    .word 2639, 2648, 2657, 2666, 2675, 2684, 2693, 2702, 2710, 2719, 2727, 2735
-    .word 2743, 2751, 2759, 2767, 2774, 2782, 2789, 2796, 2803, 2810, 2817, 2823
-    .word 2830, 2836, 2842, 2848, 2853, 2859, 2864, 2869, 2874, 2879, 2884, 2888
-    .word 2892, 2896, 2900, 2903, 2907, 2910, 2913, 2916, 2918, 2921, 2923, 2925
-    .word 2926, 2928, 2929, 2930, 2931, 2932, 2932, 2932, 2932, 2932, 2931, 2930
-    .word 2929, 2928, 2927, 2925, 2923, 2921, 2919, 2916, 2913, 2910, 2907, 2903
-    .word 2899, 2895, 2891, 2887, 2882, 2877, 2872, 2867, 2861, 2855, 2849, 2843
-    .word 2836, 2830, 2823, 2816, 2808, 2801, 2793, 2785, 2777, 2768, 2760, 2751
-    .word 2742, 2733, 2723, 2714, 2704, 2694, 2684, 2673, 2663, 2652, 2641, 2630
-    .word 2619, 2607, 2596, 2584, 2572, 2560, 2548, 2536, 2523, 2510, 2498, 2485
-    .word 2472, 2458, 2445, 2432, 2418, 2404, 2391, 2377, 2363, 2349, 2334, 2320
-    .word 2306, 2291, 2277, 2262, 2248, 2233, 2218, 2203, 2188, 2173, 2158, 2143
-    .word 2128, 2113, 2097, 2082, 2067, 2052, 2036, 2021, 2006, 1990, 1975, 1960
-    .word 1944, 1929, 1914, 1898, 1883, 1868, 1853, 1838, 1822, 1807, 1792, 1777
-    .word 1762, 1748, 1733, 1718, 1703, 1689, 1674, 1660, 1645, 1631, 1617, 1603
-    .word 1589, 1575, 1561, 1548, 1534, 1521, 1507, 1495, 1482, 1469, 1456, 1443
-    .word 1431, 1418, 1406, 1394, 1382, 1370, 1358, 1347, 1336, 1324, 1313, 1302
-    .word 1292, 1281, 1271, 1260, 1250, 1240, 1231, 1221, 1212, 1203, 1194, 1185
-    .word 1176, 1168, 1160, 1151, 1144, 1136, 1128, 1121, 1114, 1107, 1100, 1094
-    .word 1087, 1081, 1075, 1069, 1064, 1059, 1053, 1048, 1044, 1039, 1035, 1030
-    .word 1026, 1022, 1019, 1015, 1012, 1009, 1006, 1003, 1001, 999, 996, 994
-    .word 993, 991, 989, 988, 987, 986, 985, 985, 984, 984, 984, 984, 984, 985
-    .word 985, 986, 987, 988, 989, 990, 991, 993, 995, 996, 998, 1000, 1002
-    .word 1005, 1007, 1010, 1012, 1015, 1018, 1021, 1024, 1027, 1030, 1033, 1037
-    .word 1040, 1044, 1047, 1051, 1054, 1058, 1062, 1066, 1070, 1074, 1078, 1082
-    .word 1086, 1090, 1094, 1099, 1103, 1107, 1111, 1116, 1120, 1124, 1128, 1133
-    .word 1137, 1141, 1146, 1150, 1154, 1158, 1162, 1166, 1170, 1175, 1179, 1182
-    .word 1186, 1190, 1194, 1198, 1201, 1205, 1209, 1212, 1215, 1219, 1222, 1225
-    .word 1228, 1231, 1234, 1237, 1239, 1242, 1244, 1247, 1249, 1251, 1253, 1255
-    .word 1257, 1258, 1260, 1261, 1262, 1264, 1265, 1265, 1266, 1267, 1267, 1267
-    .word 1268, 1268, 1267, 1267, 1267, 1266, 1265, 1264, 1263, 1262, 1260, 1259
-    .word 1257, 1255, 1253, 1251, 1249, 1246, 1243, 1240, 1237, 1234, 1231, 1227
-    .word 1223, 1219, 1215, 1211, 1207, 1202, 1197, 1193, 1187, 1182, 1177, 1171
-    .word 1166, 1160, 1154, 1147, 1141, 1135, 1128, 1121, 1114, 1107, 1100, 1092
-    .word 1085, 1077, 1069, 1061, 1053, 1045, 1036, 1028, 1019, 1010, 1001, 992
-    .word 983, 974, 964, 955, 945, 935, 926, 916, 906, 895, 885, 875, 864, 854
-    .word 843, 833, 822, 811, 800, 789, 778, 767, 756, 745, 734, 723, 711, 700
-    .word 689, 677, 666, 654, 643, 632, 620, 609, 597, 586, 574, 563, 551, 540
-    .word 529, 517, 506, 495, 483, 472, 461, 450, 439, 428, 417, 406, 395, 384
-    .word 374, 363, 353, 342, 332, 322, 312, 302, 292, 282, 272, 263, 253, 244
-    .word 235, 226, 217, 208, 199, 191, 182, 174, 166, 158, 150, 143, 135, 128
-    .word 121, 114, 107, 101, 95, 88, 82, 77, 71, 66, 61, 56, 51, 46, 42, 38, 34
-    .word 30, 26, 23, 20, 17, 14, 12, 10, 8, 6, 4, 3, 2, 1, 1, 0, 0, 0, 0, 1, 2
-    .word 3, 4, 5, 7, 9, 11, 14, 16, 19, 22, 26, 29, 33, 37, 41, 46, 50, 55, 61
-    .word 66, 72, 77, 84, 90, 96, 103, 110, 117, 124, 132, 140, 148, 156, 164
-    .word 173, 182, 191, 200, 209, 219, 228, 238, 248, 259, 269, 280, 290, 301
-    .word 312, 324, 335, 347, 358, 370, 382, 394, 407, 419, 431, 444, 457, 470
-    .word 483, 496, 509, 522, 536, 549, 563, 576, 590, 604, 618, 632, 646, 660
-    .word 674, 689, 703, 717, 732, 746, 760, 775, 789, 804, 819, 833, 848, 862
-    .word 877, 891, 906, 921, 935, 950, 964, 979, 993, 1008, 1022, 1036, 1051
-    .word 1065, 1079, 1093, 1107, 1121, 1135, 1149, 1163, 1177, 1191, 1204, 1218
-    .word 1231, 1244, 1258, 1271, 1284, 1297, 1309, 1322, 1335, 1347, 1359, 1372
-    .word 1384, 1396, 1407, 1419, 1431, 1442, 1453, 1464, 1475, 1486, 1497, 1506
-    .word 1516, 1527, 1537, 1546, 1556, 1566, 1575, 1584, 1593, 1602, 1611, 1619
-    .word 1627, 1635, 1643, 1651, 1659, 1666, 1673, 1680, 1687, 1694, 1700, 1707
-    .word 1713, 1719, 1724, 1730, 1735, 1740, 1745, 1750, 1755, 1759, 1764, 1768
-    .word 1771, 1775, 1779, 1782, 1785, 1788, 1791, 1794, 1796, 1798, 1800, 1802
-    .word 1804, 1806, 1807, 1808, 1809, 1810, 1811, 1811, 1812, 1812, 1812, 1812
-    .word 1812, 1812, 1811, 1811, 1810, 1809, 1808, 1807, 1805, 1804, 1802, 1801
-    .word 1799, 1797, 1795, 1793, 1791, 1788, 1786, 1783, 1781, 1778, 1775, 1772
-    .word 1769, 1766, 1763, 1760, 1757, 1753, 1750, 1746, 1743, 1739, 1736, 1732
-    .word 1728, 1725, 1721, 1717, 1713, 1709, 1706, 1702, 1698, 1694, 1690, 1686
-    .word 1682, 1678, 1674, 1671, 1667, 1663, 1659, 1655, 1652, 1648, 1644, 1641
-    .word 1637, 1634, 1630, 1627, 1623, 1620, 1617, 1614, 1611, 1608, 1605, 1602
-    .word 1599, 1596, 1594, 1591, 1589, 1587, 1584, 1582, 1580, 1579, 1577, 1575
-    .word 1574, 1572, 1571, 1570, 1569, 1568, 1568, 1567, 1566, 1566, 1566, 1566
-    .word 1566, 1566, 1567, 1567, 1568, 1569, 1570, 1571, 1573, 1574, 1576, 1578
-    .word 1580, 1582, 1585, 1587, 1590, 1593, 1596, 1599, 1602, 1606, 1610, 1613
-    .word 1618, 1622, 1626, 1631, 1636, 1641, 1646, 1651, 1656, 1662, 1668, 1674
-    .word 1680, 1686, 1693, 1699, 1706, 1713, 1720, 1728, 1735, 1743, 1751, 1759
-    .word 1767, 1775, 1783, 1792, 1801, 1809, 1818, 1828, 1837, 1846, 1856, 1866
-    .word 1875, 1885, 1895, 1906, 1916, 1926, 1937, 1948, 1958, 1969, 1980, 1991
-    .word 2003, 2014, 2025, 2037, 2048, 2060, 2072, 2084, 2096, 2108, 2120, 2132
-    .word 2144, 2156, 2168, 2181, 2193, 2205, 2218, 2230, 2243, 2255, 2268, 2281
-    .word 2293, 2306, 2318, 2331, 2344, 2356, 2369, 2381, 2394, 2407, 2419, 2432
-    .word 2444, 2456, 2469, 2481, 2494, 2506, 2518, 2530, 2542, 2554, 2566, 2578
-    .word 2590, 2602, 2613, 2625, 2636, 2647, 2659, 2670, 2681, 2692, 2703, 2713
-    .word 2724, 2734, 2744, 2755, 2765, 2775, 2784, 2794, 2803, 2813, 2822, 2831
-    .word 2839, 2848, 2857, 2865, 2873, 2881, 2889, 2896, 2904, 2911, 2918, 2925
-    .word 2931, 2938, 2944, 2950, 2956, 2961, 2967, 2972, 2977, 2982, 2986, 2991
-    .word 2995, 2999, 3002, 3006
-max_fft_shift:
-    .word 9
+    .word 2514, 2795, 2923, 2828, 2515, 2059, 1581, 1204, 1004, 990, 1099, 1223
+    .word 1254, 1127, 846, 487, 166, 0, 58, 339, 767, 1223, 1585, 1777, 1791
+    .word 1690, 1581, 1572, 1727, 2040, 2436, 2795
