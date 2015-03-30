@@ -50,7 +50,7 @@
 #
 # Number of samples per FFT. Assumed to be a power of 2 greater than or equal to
 # 8 and less than or equal to 16384 (pick the highest value that won't lag)
-    .equ N, 1024
+    .equ N, 2048
 #
 # Number of iterations for the CORDIC algorithm for determining magnitude and
 # phase displacement (the higher the number, the better the accuracy)
@@ -86,6 +86,7 @@
     .text
     .globl main
     .set noreorder
+    .set noat
     .ent main
 main:
     la $t0, sample_array_pointer_0
@@ -115,8 +116,10 @@ main_transfer_loop_0:
     lw $t4, ($t4)
     addu $t5, $t1, $t3
     sw $t4, ($t5)
-    bne $t2, $t3, main_transfer_loop_0
+    addu $at, $t3, $0
     addu $t3, $t3, 4
+    bne $t2, $at, main_transfer_loop_0
+    nop
     la $t1, sample_array_pointer_1
     lw $t1, ($t1)
     li $t2, 2 * SAMPLE_SPACE - 4
@@ -125,8 +128,10 @@ main_transfer_loop_1:
     lw $t4, ($t4)
     addu $t5, $t1, $t3
     sw $t4, -SAMPLE_SPACE($t5)
-    bne $t2, $t3, main_transfer_loop_1
+    addu $at, $t3, $0
     addu $t3, $t3, 4
+    bne $t2, $at, main_transfer_loop_1
+    nop
     la $t1, sample_array_pointer_2
     lw $t1, ($t1)
     li $t2, 3 * SAMPLE_SPACE - 4
@@ -135,8 +140,10 @@ main_transfer_loop_2:
     lw $t4, ($t4)
     addu $t5, $t1, $t3
     sw $t4, -2*SAMPLE_SPACE($t5)
-    bne $t2, $t3, main_transfer_loop_2
+    addu $at, $t3, $0
     addu $t3, $t3, 4
+    bne $t2, $at, main_transfer_loop_2
+    nop
     la $t1, sample_array_pointer_3
     lw $t1, ($t1)
     li $t2, 4 * SAMPLE_SPACE - 4
@@ -145,8 +152,10 @@ main_transfer_loop_3:
     lw $t4, ($t4)
     addu $t5, $t1, $t3
     sw $t4, -3*SAMPLE_SPACE($t5)
-    bne $t2, $t3, main_transfer_loop_3
+    addu $at, $t3, $0
     addu $t3, $t3, 4
+    bne $t2, $at, main_transfer_loop_3
+    nop
 
     jal fft
     nop
@@ -157,7 +166,8 @@ main_transfer_loop_3:
 main_angle_erase:
     addu $t4, $t0, $t3
     sw $0, 4($t4)
-    blt $t0, $t2, main_angle_erase
+    sltu $at, $t0, $t2
+    bne $at, $0, main_angle_erase
     addu $t0, $t0, 8
 
     lw $ra, 4($sp)
@@ -294,7 +304,7 @@ fft_outer_loop:
     addiu $t7, $t4, -8              # $t7 = middle loop counter
 fft_middle_loop:
     subu $t8, $t8, $t3              # get next lookup index
-    beqz $t8, fft_inner_loop_last   # special case for when the index = 0
+    beq $t8, $0, fft_inner_loop_last   # special case for when the index = 0
     addu $t9, $t7, $0               # inner loop counter = middle (branch delay)
     addu $t2, $t1, $t8              # address of the element in the lookup table
     lw $t0, ($t2)                   # load the cosine value
@@ -331,9 +341,10 @@ fft_inner_loop:
     addu $s7, $t2, $a2              # re(fft[index]) + (cos*re-sin*im)
     sw $s7, ($a0)                   # store the value
     addu $s7, $s3, $a3              # im(fft[index]) + (sin*re+cos*im)
-    addu $t9, $t9, $t5              # increment the inner loop counter
-    blt $t9, $s6, fft_inner_loop    # if inner loop counter < max value
-    sw $s7, 4($a0)                  # store the value (branch delay)
+    sw $s7, 4($a0)                  # store the value
+    sltu $at, $t9, $s6
+    bne $at, $0, fft_inner_loop     # if inner loop counter < max value
+    addu $t9, $t9, $t5              # increment inner loop counter(branch delay)
     b fft_middle_loop               # branch back to the middle loop
     addiu $t7, $t7, -8              # decrement middle loop count (branch delay)
 fft_inner_loop_last:
@@ -350,30 +361,31 @@ fft_inner_loop_last:
     addu $s7, $t2, $s4
     sw $s7, ($a0)
     addu $s7, $s3, $s5
-    addu $t9, $t9, $t5
-    blt $t9, $s6, fft_inner_loop_last
-    sw $s7, 4($a0)                  # (branch delay)
+    sw $s7, 4($a0)
+    sltu $at, $t9, $s6
+    bne $at, $0, fft_inner_loop_last
+    addu $t9, $t9, $t5              # (branch delay)
     srl $t3, $t3, 1                 # halve the lookup index difference
     bne $0, $t6, fft_outer_loop     # since this is always the last middle loop
     addiu $t6, $t6, -1              # (branch delay)
     li $s1, 8 * (N - 1)             # array index and loop counter
 fft_cordic_rectangular_to_polar_conversion_loop:
-    addu $s3, $s1, $s2          # load the data for the conversion
+    addu $s3, $s1, $s2              # load the data for the conversion
     lw $t1, 4($s3)
-    lw $t0, ($s3)               # (load delay)
+    lw $t0, ($s3)                   # (load delay)
     bgez $t1, fft_cordic_rectangular_to_polar_check_x   # if y<0 (load delay)
-    li $t3, 0                   # $t3=angle (branch delay)
-    neg $t0, $t0                # x=-x
-    neg $t1, $t1                # y=-y
-    li $t3, 2147483648          # angle=pi
+    li $t3, 0                       # $t3=angle (branch delay)
+    subu $t0, $0, $t0               # x=-x
+    subu $t1, $0, $t1               # y=-y
+    li $t3, 2147483648              # angle=pi
 fft_cordic_rectangular_to_polar_check_x:
     bgez $t0, fft_cordic_rectangular_to_polar_loop_init # if x<0
-    li $t5, CORDIC_ITERATIONS   # (branch delay)
-    neg $t4, $t0                # temp=-x
-    move $t0, $t1               # x=y
-    move $t1, $t4               # y=temp
+    li $t5, CORDIC_ITERATIONS       # (branch delay)
+    subu $t4, $0, $t0               # temp=-x
+    addu $t0, $0, $t1               # x=y
+    addu $t1, $0, $t4               # y=temp
     li $t4, 1073741824
-    addu $t3, $t3, $t4          # angle+=pi/2
+    addu $t3, $t3, $t4              # angle+=pi/2
 fft_cordic_rectangular_to_polar_loop_init:
 # x and y are now both positive (and have at least one leading 0)
 # shift x and y so that the largest has its left most bit as a 1 and store the
@@ -384,47 +396,56 @@ fft_cordic_rectangular_to_polar_loop_init:
 # shift x and y right 1 and divide by the CORDIC gain (to prevent overflow)
     li $t7, HALF_INVERSE_CORDIC_GAIN
     multu $t0, $t7
-    sllv $t1, $t1, $t6          # (multiply delay)
+    sllv $t1, $t1, $t6              # (multiply delay)
     mfhi $t0
     multu $t1, $t7
 # subtract one shift to account for the multiply
-    addiu $t6, $t6, -1          # (multiply delay)
+    addiu $t6, $t6, -1              # (multiply delay)
     mfhi $t1
 # x and y should now be able to handle being multiplied by
 # sqrt(2)*(CORDIC GAIN) then shifted right by $t6 (since $t6>=0)
-    li $t4, 0                   # $t4=i=0
-    la $t2, arctan_lookup       # pointer to current arctan value
+    li $t4, 0                       # $t4=i=0
+    la $t2, arctan_lookup           # pointer to current arctan value
 fft_cordic_rectangular_to_polar_loop:
     bltz $t1, fft_cordic_rectangular_to_polar_y_negative    # if y>=0
-    srlv $t7, $t0, $t4          # $t7=x>>i (branch delay)
-    srlv $t8, $t1, $t4          # $t8=y>>i
-    addu $t0, $t0, $t8          # x=x+(y>>i)
-    subu $t1, $t1, $t7          # y=y-(x>>i)
-    lw $t8, ($t2)               # $t8 = arctan(2^-i)
-    addiu $t2, $t2, 4           # increment arctan pointer (load delay)
-    addiu $t4, $t4, 1           # increment loop count
-    blt $t4, $t5, fft_cordic_rectangular_to_polar_loop  # if i < $t5 loop again
-    addu $t3, $t3, $t8          # angle=angle+arctan(2^-i) (branch delay)
+    srlv $t7, $t0, $t4              # $t7=x>>i (branch delay)
+    srlv $t8, $t1, $t4              # $t8=y>>i
+    addu $t0, $t0, $t8              # x=x+(y>>i)
+    subu $t1, $t1, $t7              # y=y-(x>>i)
+    lw $t8, ($t2)                   # $t8 = arctan(2^-i)
+    addiu $t2, $t2, 4               # increment arctan pointer (load delay)
+    addiu $t4, $t4, 1               # increment loop count
+    slt $at, $t4, $t5
+    bne $at, $0, fft_cordic_rectangular_to_polar_loop  # if i < $t5 loop again
+    addu $t3, $t3, $t8              # angle=angle+arctan(2^-i) (branch delay)
     b fft_cordic_rectangular_to_polar_end   # done looping
-    srlv $t0, $t0, $t6          # shift x back to its original magnitude
+    srlv $t0, $t0, $t6              # shift x back to its original magnitude
 fft_cordic_rectangular_to_polar_y_negative:
-    subu $t8, $0, $t1           # $t8=-y (positive)
-    srlv $t8, $t8, $t4          # $t8=(-y)>>i
-    addu $t0, $t0, $t8          # x=x+((-y)>>i)
-    addu $t1, $t1, $t7          # y=y+(x>>i)
-    lw $t8, ($t2)               # $t8 = arctan(2^-i)
-    addiu $t2, $t2, 4           # increment arctan pointer (load delay)
-    addiu $t4, $t4, 1           # increment loop count
-    blt $t4, $t5, fft_cordic_rectangular_to_polar_loop  # if i < $t5 loop again
-    subu $t3, $t3, $t8          # angle=angle-arctan(2^-i) (branch delay)
-    srlv $t0, $t0, $t6          # shift x back to its original magnitude
+    subu $t8, $0, $t1               # $t8=-y (positive)
+    srlv $t8, $t8, $t4              # $t8=(-y)>>i
+    addu $t0, $t0, $t8              # x=x+((-y)>>i)
+    addu $t1, $t1, $t7              # y=y+(x>>i)
+    lw $t8, ($t2)                   # $t8 = arctan(2^-i)
+    addiu $t2, $t2, 4               # increment arctan pointer (load delay)
+    addiu $t4, $t4, 1               # increment loop count
+    slt $at, $t4, $t5
+    bne $at, $0, fft_cordic_rectangular_to_polar_loop  # if i < $t5 loop again
+    subu $t3, $t3, $t8              # angle=angle-arctan(2^-i) (branch delay)
+    srlv $t0, $t0, $t6              # shift x back to its original magnitude
 fft_cordic_rectangular_to_polar_end:
     srlv $t0, $t0, $s0          # shift the value back to its proper magnitude
     sw $t0, ($s3)               # store the magnitude back in the array
     sw $t3, 4($s3)              # store the angle back in the array
     bne $0, $s1, fft_cordic_rectangular_to_polar_conversion_loop
     addiu $s1, $s1, -8
-    lw $s0, ($sp)               # pop the s registers back
+
+
+
+
+
+
+
+    lw $s0, ($sp)                   # pop the s registers back
     lw $s1, 4($sp)
     lw $s2, 8($sp)
     lw $s3, 12($sp)
@@ -432,9 +453,37 @@ fft_cordic_rectangular_to_polar_end:
     lw $s5, 20($sp)
     lw $s6, 24($sp)
     lw $s7, 28($sp)
-    jr $ra                      # return
+    jr $ra                          # return
     addiu $sp, $sp, 32
-
+################################################################################
+# timer_isr
+################################################################################
+timer_isr:
+# isr stuff
+# loop through all the pins and the adc and increment their counts.
+# for the output pins, set the output to their sign bits
+# for the adc if the unsigned count is less than the increment, sample the adc
+# insert the sample into the array pointed to by sample_array_pointer_adc
+# at the position indicated by sample index
+# update the min max and sum
+# increment sample index
+# if sample index == max value, rotate the array pointers, reset sample index,
+# set the min, max, and sum to their starting values (max int, min int, 0)
+# every other swap, initiate the fft routine to update the frequencies
+# isr stuff
+# return
+################################################################################
+# pin_change_isr
+################################################################################
+pin_change_isr:
+# isr stuff
+# loop through each input pin and set the corresponding increment to 0 or non 0
+# if the increment is zero, set the count to zero
+# if non zero, check the increment. if not 0, leave it alone otherwise make it 1
+# count how many enabled output pins there are and store the value
+# initiate the frequency update isr
+# isr stuff
+# return
 ################################################################################
 #################################### Data ######################################
 ################################################################################
@@ -450,18 +499,47 @@ sample_array_pointer_2:
     .space 4
 sample_array_pointer_3:
     .space 4
+sample_array_pointer_adc:
+    .space 4
 sample_array_0:
     .space SAMPLE_SPACE
+sample_array_0_max_min_sum:
+    .space 12
 sample_array_1:
     .space SAMPLE_SPACE
+sample_array_1_max_min_sum:
+    .space 12
 sample_array_2:
     .space SAMPLE_SPACE
+sample_array_2_max_min_sum:
+    .space 12
 sample_array_3:
     .space SAMPLE_SPACE
+sample_array_3_max_min_sum:
+    .space 12
 sample_array_4:
     .space SAMPLE_SPACE
+sample_array_4_max_min_sum:
+    .space 12
 fft_array:
     .space FFT_SPACE
+input_pin_address:
+    .space 100
+output_pin_address:
+    .space 100
+output_pin_count:
+    .space 100
+adc_count:
+    .space 4
+output_pin_increment:
+    .space 100
+adc_increment:
+    .space 4
+number_of_active_pins:
+    .space 4
+
+
+
 test_array:
     .word 2549, 2630, 2693, 2736, 2757, 2754, 2727, 2675, 2598, 2497, 2374, 2231
     .word 2070, 1893, 1705, 1511, 1311, 1113, 919, 734, 562, 407, 274, 164, 80
