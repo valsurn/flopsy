@@ -1,14 +1,14 @@
-################################################################################
-################################################################################
-################################## flopsy.s ####################################
-################################################################################
-################################################################################
+###############################################################################
+###############################################################################
+################################## flopsy.s ###################################
+###############################################################################
+###############################################################################
 #
 # A program for playing music using floppy drives or other devices
 #
-################################################################################
-################################### License ####################################
-################################################################################
+###############################################################################
+################################### License ###################################
+###############################################################################
 #
 # The MIT License (MIT)
 #
@@ -21,8 +21,8 @@
 # copies of the Software, and to permit persons to whom the Software is
 # furnished to do so, subject to the following conditions:
 #
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
 #
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 # IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -33,31 +33,32 @@
 # SOFTWARE.
 #
 #
-################################################################################
-#################################### Notes #####################################
-################################################################################
+###############################################################################
+#################################### Notes ####################################
+###############################################################################
 #
-# This code was written for the PIC32MX370F512L.
-# If using anything other than the PIC32MX370F512L, it may require modification.
-# Many arrays assume contiguousness to another array, so don't reorder arrays.
-# Make sure that any data that depends on a starting value is not altered.
+# This code was written for the PIC32MX370F512L
+# If using anything other than the PIC32MX370F512L, it may require modification
+# Many arrays assume contiguousness to another array, so don't reorder arrays
+# Make sure that any data that depends on a starting value is not altered
 #
-################################################################################
-################################## Constants ###################################
-################################################################################
+###############################################################################
+################################## Constants ##################################
+###############################################################################
 #
-########################## These should be changeable ##########################
+########################## These should be changeable #########################
 #
-# Number of samples per FFT. Assumed to be a power of 2 greater than or equal to
-# 8 and less than or equal to 16384 (pick the highest value that won't lag)
-    .equ N, 2048
+# Number of samples per FFT. Assumed to be a power of 2 greater than or equal
+# to 8 and less than or equal to 16384 (pick the highest value that won't lag)
+# Half of these positions will be filled with zeros
+    .equ N, 1024
 #
 # Number of iterations for the CORDIC algorithm for determining magnitude and
 # phase displacement (the higher the number, the better the accuracy)
 # Assumed to be greater than 0 and less than or equal to 30
     .equ CORDIC_ITERATIONS, 30
 #
-######## These should not be changed unless you know what you're doing #########
+######## These should not be changed unless you know what you're doing ########
 #
 # Constants for determining space requirements and number of iterations
     .set N_EXPONENT, N|(N>>1)
@@ -74,15 +75,15 @@
     .equ SAMPLE_SPACE, N / 2
     .equ FFT_SPACE, 8 * N
 #
-################################################################################
-################################## Includes ####################################
-################################################################################
+###############################################################################
+################################## Includes ###################################
+###############################################################################
 #
    .include "lookup_tables.s"
 #
-################################################################################
-################################### Program ####################################
-################################################################################
+###############################################################################
+################################### Program ###################################
+###############################################################################
     .text
     .globl main
     .set noreorder
@@ -116,10 +117,9 @@ main_transfer_loop_0:
     lw $t4, ($t4)
     addu $t5, $t1, $t3
     sw $t4, ($t5)
-    addu $at, $t3, $0
-    addu $t3, $t3, 4
+    or $at, $t3, $0
     bne $t2, $at, main_transfer_loop_0
-    nop
+    addiu $t3, $t3, 4
     la $t1, sample_array_pointer_1
     lw $t1, ($t1)
     li $t2, 2 * SAMPLE_SPACE - 4
@@ -128,10 +128,9 @@ main_transfer_loop_1:
     lw $t4, ($t4)
     addu $t5, $t1, $t3
     sw $t4, -SAMPLE_SPACE($t5)
-    addu $at, $t3, $0
-    addu $t3, $t3, 4
+    or $at, $t3, $0
     bne $t2, $at, main_transfer_loop_1
-    nop
+    addiu $t3, $t3, 4
     la $t1, sample_array_pointer_2
     lw $t1, ($t1)
     li $t2, 3 * SAMPLE_SPACE - 4
@@ -140,10 +139,9 @@ main_transfer_loop_2:
     lw $t4, ($t4)
     addu $t5, $t1, $t3
     sw $t4, -2*SAMPLE_SPACE($t5)
-    addu $at, $t3, $0
-    addu $t3, $t3, 4
+    or $at, $t3, $0
     bne $t2, $at, main_transfer_loop_2
-    nop
+    addiu $t3, $t3, 4
     la $t1, sample_array_pointer_3
     lw $t1, ($t1)
     li $t2, 4 * SAMPLE_SPACE - 4
@@ -152,10 +150,9 @@ main_transfer_loop_3:
     lw $t4, ($t4)
     addu $t5, $t1, $t3
     sw $t4, -3*SAMPLE_SPACE($t5)
-    addu $at, $t3, $0
-    addu $t3, $t3, 4
+    or $at, $t3, $0
     bne $t2, $at, main_transfer_loop_3
-    nop
+    addiu $t3, $t3, 4
 
     jal fft
     nop
@@ -168,29 +165,31 @@ main_angle_erase:
     sw $0, 4($t4)
     sltu $at, $t0, $t2
     bne $at, $0, main_angle_erase
-    addu $t0, $t0, 8
+    addiu $t0, $t0, 8
 
     lw $ra, 4($sp)
     jr $ra
     addiu $sp, $sp, 4
     .end main
 
-################################################################################
+###############################################################################
 # fft
-# takes 4 arrays (N/8 words long) pointed to by sample_array_pointer_0,
-# sample_array_pointer_1, sample_array_pointer_2, and sample_array_pointer_3 and
-# returns an interleaved array (2N words long) containing the magnitude & phase
-# angle of each frequency. Each phase angle is a word (signed or unsigned) where
-# 2^32 is 2 pi radians. Assumes the samples are unsigned.
+# Takes 4 arrays (N/8 words long) pointed to by sample_array_pointer_0,
+# sample_array_pointer_1, sample_array_pointer_2, and sample_array_pointer_3
+# and populates an interleaved array (2N words long) containing the magnitude
+# and phase angle of each frequency. Each phase angle is a word
+# (signed or unsigned) where 2^32 would be 2 pi radians.
 # uses: $t0, $t1, $t2, $t3, $t4, $t5, $t6, $t7, $t8, $t9, $a0, $a1, $a2, $a3
 #       ($s0, $s1, $s2, $s3, $s4, $s5, %s6, %s7 are used, but preserved)
 # input: values in max_fft_shift, sample_array_pointer_0,
 #        sample_array_pointer_1, sample_array_pointer_2,
 #        sample_array_pointer_3, and samples in the 4 arrays
 # output: fft_array will contain the magnitude and phase of each frequency
-################################################################################
+###############################################################################
 fft:
-    addiu $sp, $sp, -32             # push the s registers to the stack
+# since this routine needs a lot of registers, push all the s registers to the
+# stack
+    addiu $sp, $sp, -32
     sw $s0, ($sp)
     sw $s1, 4($sp)
     sw $s2, 8($sp)
@@ -199,113 +198,240 @@ fft:
     sw $s5, 20($sp)
     sw $s6, 24($sp)
     sw $s7, 28($sp)
-    la $s0, max_fft_shift           # contains the number of shifts to increase
-    lw $s0, ($s0)                   # the resolution when multiplying
-    la $a0, sample_array_pointer_0  # (load delay)
-    lw $a0, ($a0)                   # load the addresses of the sample arrays
-    la $a1, sample_array_pointer_1  # (load delay)
+
+# max_fft_shift is the number of shifts the fft routine will shift the value in
+# order to have the highest possible resolution during the integer calculations
+    la $s0, max_fft_shift
+    lw $s0, ($s0)
+
+# load the addresses of the array pointers then load the addresses of the
+# arrays
+    la $a0, sample_array_pointer_0                          # load delay
+    lw $a0, ($a0)
+    la $a1, sample_array_pointer_1                          # load delay
     lw $a1, ($a1)
-    la $a2, sample_array_pointer_2  # (load delay)
+    la $a2, sample_array_pointer_2                          # load delay
     lw $a2, ($a2)
-    la $a3, sample_array_pointer_3  # (load delay)
+    la $a3, sample_array_pointer_3                          # load delay
     lw $a3, ($a3)
-    la $s2, fft_array               # address of the output array (load delay)
-    li $t3, SAMPLE_SPACE            # $t3 is the virtual input index + 1 word
-    li $t8, 32                      # $t8 is the output index (bit reversed)
-    la $s7, hann_lookup             # load the address of the window function
+
+# load the address of the fft array
+# this will be where fft calculations are done
+    la $s2, fft_array                                       # load delay
+
+# load the number of samples before zero extending (this is an index)
+    li $t3, SAMPLE_SPACE
+
+# load the staring value for bit reversed indices
+# this would normally be the bit reversal of SAMPLE_SPACE
+# the last two zeros are for the fact that the words are 4 bytes long
+# the other two zeros (during the first iteration there will be a third zero)
+# are taking advantage of the fact that 8 loops can be made into one, since
+# each sample array is one eighth of the total array and partitioning the array
+# into eight parts will always have the parts follow the sequence
+# 0, 4, 2, 6, 1, 5, 3, 7 and in this case 4, 5, 6, and 7 are all zeros
+# adding an offset of 0 to 60 completes the bit reversal
+    li $t8, 32
+
+# load the address of the lookup table containing the Hann window function
+    la $s7, hann_lookup
+
+# begin the loop for transferring samples from the sample arrays, bit reversing
+# the index, multiplying by the Hann window function, and storing the sample in
+# an array
 fft_transfer_loop:
+
+# subtract 4 from the index and put it in a new register
     addiu $t9, $t3, -4
-    xor $s1, $t3, $t9               # $s1 = i ^ (i + 1) (always contiguous 1s)
-    clz $s3, $s1                    # get the leading zeros
-    addiu $s3, $s3, N_EXPONENT - 29 # N_EXPONENT for the size, 3 for the address
-    sllv $s1, $s1, $s3              # -32 for the word length, then shift
-    xor $t8, $t8, $s1               # xor the 1s onto the MSB side
-    addu $t5, $s2, $t8              # determine the output address (bit reverse)
-    addu $t4, $a0, $t9              # address of the element
-    lw $t6, ($t4)                   # load current element into $t6
-    addu $t0, $s7, $t9              # $t0 = address of the window function value
-    lw $s6, ($t0)                   # load the window function value
-    sllv $t6, $t6, $s0              # shift for maximal resolution w/o overflow
-    mult $s6, $t6                   # multiply by the window function
-    sw $0, 4($t5)                   # store a zero in the imaginary index
-    mfhi $t6                        # move the value into $t6
-    mflo $s6                        # move the fractional part into $s6
-    srl $s6, $s6, 30                # two MSB of the fractional part
-    addiu $s6, $s6, 1               # $s6 += 0.5
-    srl $s6, $s6, 1                 # 00 -> 0, 01 -> 1, 10 -> 1, 11 -> 2
-    sll $t6, $t6, 1                 # multiply by 2 because of the multiply
-    addu $t6, $t6, $s6              # add the rounded fractional part in
-    sw $t6, ($t5)                   # store the value in the real index
-    sw $0, 8($t5)                   # zero pad the array, since each upper index
-    sw $0, 12($t5)                  # is reversed to 1 + lower reversed
-    addu $t4, $a1, $t9              # address of the element
-    lw $t6, ($t4)                   # load current element into $t6
-    addiu $t0, $t0, SAMPLE_SPACE    # move one array worth for the next value
-    lw $s6, ($t0)                   # load the window function value
-    sllv $t6, $t6, $s0              # shift for maximal resolution w/o overflow
-    mult $s6, $t6                   # multiply by the window function
-    sw $0, 36($t5)                  # store a zero in the imaginary index
-    mfhi $t6                        # move the value into $t6
-    mflo $s6                        # move the fractional part into $s6
-    srl $s6, $s6, 30                # two MSB of the fractional part
-    addiu $s6, $s6, 1               # $s6 += 0.5
-    srl $s6, $s6, 1                 # 00 -> 0, 01 -> 1, 10 -> 1, 11 -> 2
-    sll $t6, $t6, 1                 # multiply by 2 because of the multiply
-    addu $t6, $t6, $s6              # add the rounded fractional part in
-    sw $t6, 32($t5)                 # store the value in the real index
-    sw $0, 40($t5)                  # zero pad the array, since each upper index
-    sw $0, 44($t5)                  # is reversed to 1 + lower reversed
-    addu $t4, $a2, $t9              # address of the element
-    lw $t6, ($t4)                   # load current element into $t6
-    addiu $t0, $t9, 4-2*SAMPLE_SPACE# symmetry of the window function
-    subu $t0, $s7, $t0              # $t0 = address of the window function value
-    lw $s6, ($t0)                   # load the window function value
-    sllv $t6, $t6, $s0              # shift for maximal resolution w/o overflow
-    mult $s6, $t6                   # multiply by the window function
-    sw $t6, 16($t5)                 # store the value in the real index
-    mfhi $t6                        # move the value into $t6
-    mflo $s6                        # move the fractional part into $s6
-    srl $s6, $s6, 30                # two MSB of the fractional part
-    addiu $s6, $s6, 1               # $s6 += 0.5
-    srl $s6, $s6, 1                 # 00 -> 0, 01 -> 1, 10 -> 1, 11 -> 2
-    sll $t6, $t6, 1                 # multiply by 2 because of the multiply
-    addu $t6, $t6, $s6              # add the rounded fractional part in
-    sw $0, 20($t5)                  # store a zero in the imaginary index
-    sw $0, 24($t5)                  # zero pad the array, since each upper index
-    sw $0, 28($t5)                  # is reversed to 1 + lower reversed
-    addu $t4, $a3, $t9              # address of the element
-    lw $t6, ($t4)                   # load current element into $t6
-    subu $t0, $t0, SAMPLE_SPACE     # move back 1 array worth for the next value
-    lw $s6, ($t0)                   # load the window function value
-    sllv $t6, $t6, $s0              # shift for maximal resolution w/o overflow
-    mult $s6, $t6                   # multiply by the window function
-    sw $0, 52($t5)                  # store a zero in the imaginary index
-    mfhi $t6                        # move the value into $t6
-    mflo $s6                        # move the fractional part into $s6
-    srl $s6, $s6, 30                # two MSB of the fractional part
-    addiu $s6, $s6, 1               # $s6 += 0.5
-    srl $s6, $s6, 1                 # 00 -> 0, 01 -> 1, 10 -> 1, 11 -> 2
-    sll $t6, $t6, 1                 # multiply by 2 because of the multiply
-    addu $t6, $t6, $s6              # add the rounded fractional part in
-    sw $t6, 48($t5)                 # store the value in the real index
-    sw $0, 56($t5)                  # zero pad the array, since each upper index
-    sw $0, 60($t5)                  # is reversed to 1 + lower reversed
-    bne $0, $t9, fft_transfer_loop  # loop through the array
-    addiu $t3, $t3, -4              # decrement $t3 (branch delay)
+# n xor (n +- 2^m) always gives contiguous 1s
+# this means the result of the xor can always be bit reversed by shifting
+# xor the shifted result with the bit-reversed index to perform the subtraction
+    xor $s1, $t3, $t9
+# in order to know how far to shift, count the leading zeros
+# 32 - N_EXPONENT <= number of leading zeros <= 29
+    clz $s3, $s1
+# if the result is 29, it needs to shift over N_EXPONENT times
+# if it is 29 that means only the LSB changed; shifting it N_EXPONENT - 1 times
+# puts it in the MSB position
+# add one more shift because of the interleaved imaginary values
+# for each additional 1, there is one less leading 0, which means one less
+# shift
+# the number of leading zeros - 29 + N_EXPONENT gives the number of shifts
+    addiu $s3, $s3, N_EXPONENT-29
+    sllv $s1, $s1, $s3
+# xor the result into the bit-reversed number
+# this changes the MSB of the bit-reversed index just like subtraction does
+# to the LSB of the original index
+    xor $t8, $t8, $s1
+# add the bit-reversed index to the fft array address
+# (valid for the rest of the iteration of the transfer loop)
+    addu $t5, $s2, $t8
+
+# add the index to array 0's address and load the word
+    addu $t4, $a0, $t9
+    lw $t6, ($t4)
+# add the index to the address of the window function array and load the word
+    addu $t0, $s7, $t9                                      # load delay
+    lw $s6, ($t0)
+# shift to increase the resolution of the multiplication without overflowing
+    sllv $t6, $t6, $s0                                      # load delay
+# multiply the sample by the window function value (hi contains the product/2)
+    mult $s6, $t6
+# store the interleaved imaginary portion of the sample (always zero)
+    sw $0, 4($t5)                                           # multiply delay
+# move the product into the general purpose registers
+    mfhi $t6
+    mflo $s6
+# shifting the fractional part over 30 leaves just the 2 MSBs
+    srl $s6, $s6, 30
+# the MSBs can be 00, 01, 10, or 11
+# to round add 0 if 00, 1 if 01 or 10, and 2 if 11
+# this is the same as adding 1 and right shifting 1
+# (or adding 0.5 and flooring)
+    addiu $s6, $s6, 1
+    srl $s6, $s6, 1
+# since the multiplication done earlier gives half the product, left shift once
+    sll $t6, $t6, 1
+# add the rounded part into the product and store it in the fft array
+    addu $t6, $t6, $s6
+    sw $t6, ($t5)
+# store a zero (0+0i) to pad the array
+    sw $0, 8($t5)
+    sw $0, 12($t5)
+
+# The code above essentially repeats 3 more times with some constants changed
+
+# add the index to array 1's address and load the word
+    addu $t4, $a1, $t9
+    lw $t6, ($t4)
+# add the size of a sample array to the previous window function address and
+# load the word
+    addiu $t0, $t0, SAMPLE_SPACE                            # load delay
+    lw $s6, ($t0)
+# shift to increase the resolution of the multiplication without overflowing
+    sllv $t6, $t6, $s0                                      # load delay
+# multiply the sample by the window function value (hi contains the product/2)
+    mult $s6, $t6
+# store the interleaved imaginary portion of the sample (always zero)
+    sw $0, 36($t5)                                          # multiply delay
+# move the product into the general purpose registers
+    mfhi $t6
+    mflo $s6
+# shifting the fractional part over 30 leaves just the 2 MSBs
+    srl $s6, $s6, 30
+# the MSBs can be 00, 01, 10, or 11
+# to round add 0 if 00, 1 if 01 or 10, and 2 if 11
+# this is the same as adding 1 and right shifting 1
+# (or adding 0.5 and flooring)
+    addiu $s6, $s6, 1
+    srl $s6, $s6, 1
+# since the multiplication done earlier gives half the product, left shift once
+    sll $t6, $t6, 1
+# add the rounded part into the product and store it in the fft array
+# because of the bit reversal these get stored in 0,4,2,6,1,5,3,7 order
+# (4, 5, 6, and 7 are the zero padded arrays)
+    addu $t6, $t6, $s6
+    sw $t6, 32($t5)
+# store a zero (0+0i) to pad the array
+    sw $0, 40($t5)
+    sw $0, 44($t5)
+
+# The code above essentially repeats 2 more times with some constants changed
+
+# add the index to array 2's address and load the word
+    addu $t4, $a2, $t9
+    lw $t6, ($t4)
+# since the window function is symmetrical, only half of it needs to be stored
+# the halfway point is located at the end of the array
+# the array is twice as long as a sample array so the last element is at
+# (window function array address)+2*(size of a sample array)-4
+# subtract the index to get the window function value
+    addiu $t0, $s7, 2*SAMPLE_SPACE-4                        # load delay
+    subu $t0, $t0, $t9
+    lw $s6, ($t0)
+# shift to increase the resolution of the multiplication without overflowing
+    sllv $t6, $t6, $s0                                      # load delay
+# multiply the sample by the window function value (hi contains the product/2)
+    mult $s6, $t6
+# store the interleaved imaginary portion of the sample (always zero)
+    sw $0, 20($t5)                                          # multiply delay
+# move the product into the general purpose registers
+    mfhi $t6
+    mflo $s6
+# shifting the fractional part over 30 leaves just the 2 MSBs
+    srl $s6, $s6, 30
+# the MSBs can be 00, 01, 10, or 11
+# to round add 0 if 00, 1 if 01 or 10, and 2 if 11
+# this is the same as adding 1 and right shifting 1
+# (or adding 0.5 and flooring)
+    addiu $s6, $s6, 1
+    srl $s6, $s6, 1
+# since the multiplication done earlier gives half the product, left shift once
+    sll $t6, $t6, 1
+# add the rounded part into the product and store it in the fft array
+# because of the bit reversal these get stored in 0,4,2,6,1,5,3,7 order
+# (4, 5, 6, and 7 are the zero padded arrays)
+    addu $t6, $t6, $s6
+    sw $t6, 16($t5)
+# store a zero (0+0i) to pad the array
+    sw $0, 24($t5)
+    sw $0, 28($t5)
+
+# The code above essentially repeats 1 more time with some constants changed
+
+# add the index to array 3's address and load the word
+    addu $t4, $a3, $t9
+    lw $t6, ($t4)
+# subtract the size of a sample array (because of symmetry) and load the word
+    subu $t0, $t0, SAMPLE_SPACE                             # load delay
+    lw $s6, ($t0)
+# shift to increase the resolution of the multiplication without overflowing
+    sllv $t6, $t6, $s0                                      # load delay
+# multiply the sample by the window function value (hi contains the product/2)
+    mult $s6, $t6
+# store the interleaved imaginary portion of the sample (always zero)
+    sw $0, 52($t5)                                          # multiply delay
+# move the product into the general purpose registers
+    mfhi $t6
+    mflo $s6
+# shifting the fractional part over 30 leaves just the 2 MSBs
+    srl $s6, $s6, 30
+# the MSBs can be 00, 01, 10, or 11
+# to round add 0 if 00, 1 if 01 or 10, and 2 if 11
+# this is the same as adding 1 and right shifting 1
+# (or adding 0.5 and flooring)
+    addiu $s6, $s6, 1
+    srl $s6, $s6, 1
+# since the multiplication done earlier gives half the product, left shift once
+    sll $t6, $t6, 1
+# add the rounded part into the product and store it in the fft array
+    addu $t6, $t6, $s6
+    sw $t6, 48($t5)
+# store a zero (0+0i) to pad the array
+    sw $0, 56($t5)
+    sw $0, 60($t5)
+
+# this is the end of the fft transfer loop
+# if the index isn't zero, do another iteration
+    bne $0, $t9, fft_transfer_loop
+# decrement the previous index (independant of the branch instruction)
+    addiu $t3, $t3, -4                                      # branch delay
+
+
     la $t1, cos_lookup              # the pointer to the cosine lookup table
     li $t3, 2 * N                   # $t3 = difference between lookup indices
     li $t5, 8                       # amount to increment inner loop counter
     li $t6, N_EXPONENT - 1          # outer loop counter
     li $s6, 8 * N                   # inner loop maximum
 fft_outer_loop:
-    addu $t4, $t5, $0               # move increment amount to the index offset
+    or $t4, $t5, $0                 # move increment amount to the index offset
     sll $t5, $t5, 1                 # double the increment amount
     li $t8, 2 * N                   # $t8 = lookup index
     addiu $t7, $t4, -8              # $t7 = middle loop counter
 fft_middle_loop:
     subu $t8, $t8, $t3              # get next lookup index
     beq $t8, $0, fft_inner_loop_last   # special case for when the index = 0
-    addu $t9, $t7, $0               # inner loop counter = middle (branch delay)
+    or $t9, $t7, $0                 # inner loop counter = middle (branch delay)
     addu $t2, $t1, $t8              # address of the element in the lookup table
     lw $t0, ($t2)                   # load the cosine value
     lw $s1, N($t2)                  # load the sine value
@@ -382,8 +508,8 @@ fft_cordic_rectangular_to_polar_check_x:
     bgez $t0, fft_cordic_rectangular_to_polar_loop_init # if x<0
     li $t5, CORDIC_ITERATIONS       # (branch delay)
     subu $t4, $0, $t0               # temp=-x
-    addu $t0, $0, $t1               # x=y
-    addu $t1, $0, $t4               # y=temp
+    or $t0, $t1, $0                 # x=y
+    or $t1, $t4, $0                 # y=temp
     li $t4, 1073741824
     addu $t3, $t3, $t4              # angle+=pi/2
 fft_cordic_rectangular_to_polar_loop_init:
