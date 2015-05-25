@@ -418,59 +418,126 @@ fft_transfer_loop:
     addiu $t3, $t3, -4                                      # branch delay
 
 
-    la $t1, cos_lookup              # the pointer to the cosine lookup table
-    li $t3, 2 * N                   # $t3 = difference between lookup indices
-    li $t5, 8                       # amount to increment inner loop counter
-    li $t6, N_EXPONENT - 1          # outer loop counter
-    li $s6, 8 * N                   # inner loop maximum
+# initialize registers for the main fft loops
+# load the address of the cosine and sine lookup tables
+# the sine lookup table overlaps the cosine lookup table and starts an offset
+# of N after the cosine
+    la $t1, cos_lookup
+# initialize the ammount to decrement the lookup index
+# each time through the outer loop this will be halved
+    li $t3, 2 * N
+# load the ammount to increment the inner loop counter
+# this doubles each time through the outer loop
+    li $t5, 8
+# initialize the outer loop counter
+# the out loop ends after this is zero
+    li $t6, N_EXPONENT - 1
+# initialize the inner loop maximum
+    li $s6, FFT_SPACE
+
+# the fft outer loop runs N_EXPONENT times and determines how far appart each
+# pair of elements is appart in the array
 fft_outer_loop:
-    or $t4, $t5, $0                 # move increment amount to the index offset
-    sll $t5, $t5, 1                 # double the increment amount
-    li $t8, 2 * N                   # $t8 = lookup index
-    addiu $t7, $t4, -8              # $t7 = middle loop counter
+
+# set the index offset to the ammount that the inner loop increments by
+    or $t4, $t5, $0
+# then double the increment ammount
+    sll $t5, $t5, 1
+# initialize the lookup index
+    li $t8, 2 * N
+# initialize the middle loop counter
+    addiu $t7, $t4, -8
+
+# the fft middle loop increments a counter that between the offset and zero
+# it also loads sine and cosine values
 fft_middle_loop:
-    subu $t8, $t8, $t3              # get next lookup index
-    beq $t8, $0, fft_inner_loop_last   # special case for when the index = 0
-    or $t9, $t7, $0                 # inner loop counter = middle (branch delay)
-    addu $t2, $t1, $t8              # address of the element in the lookup table
-    lw $t0, ($t2)                   # load the cosine value
-    lw $s1, N($t2)                  # load the sine value
+
+# decrement the lookup index
+    subu $t8, $t8, $t3
+# if this is the final iteration of the middle loop then branch to the last
+# fft inner loop (this is because of how the cosine values are represented;
+# a 1 would be 2147483648 which with signed multiplication is -2147483648)
+    beq $t8, $0, fft_inner_loop_last
+# set the inner loop counter to match the middle loop counter
+    or $t9, $t7, $0                                         # branch delay
+# since this is not the last iteration of the middle loop, get the cosine and
+# sine values from the lookup table
+    addu $t2, $t1, $t8
+    lw $t0, ($t2)
+    lw $s1, N($t2)                                          # load delay
+
+# the inner loop gets the elements from the fft array performs the
+# multiplications and additions for each group of elements
 fft_inner_loop:
-    addu $a0, $s2, $t9              # address of fft[index]
-    addu $a1, $a0, $t4              # address of fft[index + offset]
-    lw $s4, ($a1)                   # load re(fft[index + offset])
-    lw $s5, 4($a1)                  # load im(fft[index + offset]) (load delay)
-    mult $t0, $s4                   # cos * re(fft[index + offset]) (load delay)
-    lw $s3, 4($a0)                  # load im(fft[index]) (multiply delay)
-    msub $s1, $s5                   # sin * im(fft[index + offset]) (load delay)
-    lw $t2, ($a0)                   # load re(fft[index]) (multiply delay)
-    mfhi $a2                        # $a2 = (cos*re-sin*im)/2 (load delay)
-    mflo $s7                        # $s7 = fractional part
-    sll $a2, $a2, 1                 # $a2 = cos*re-sin*im
-    srl $s7, $s7, 30                # two MSB of the fractional part
-    mult $s1, $s4                   # sin * re(fft[index])
-    addiu $s7, $s7, 1               # $s7 += 0.5 (multiply delay)
-    srl $s7, $s7, 1                 # 00 -> 0, 01 -> 1, 10 -> 1, 11 -> 2
-    madd $t0, $s5                   # cos * im(fft[index])
-    addu $a2, $a2, $s7              # round cos*re-sin*im (multiply delay)
-    mfhi $a3                        # $a3 = (sin*re+cos*im)/2
-    mflo $s7                        # $s7 = fractional part
-    srl $s7, $s7, 30                # two MSB of the fractional part
-    addiu $s7, $s7, 1               # $s7 += 0.5
-    srl $s7, $s7, 1                 # 00 -> 0, 01 -> 1, 10 -> 1, 11 -> 2
-    sll $a3, $a3, 1                 # $a3 = sin*re+cos*im
-    addu $a3, $a3, $s7              # round sin*re+cos*im
-    subu $s7, $t2, $a2              # re(fft[index]) - (cos*re-sin*im)
-    sw $s7, ($a1)                   # store the value
-    subu $s7, $s3, $a3              # im(fft[index]) - (sin*re+cos*im)
-    sw $s7, 4($a1)                  # store the value
-    addu $s7, $t2, $a2              # re(fft[index]) + (cos*re-sin*im)
-    sw $s7, ($a0)                   # store the value
-    addu $s7, $s3, $a3              # im(fft[index]) + (sin*re+cos*im)
-    sw $s7, 4($a0)                  # store the value
+
+# get the address of the specified index
+# this will be refered to as fft[i]
+    addu $a0, $s2, $t9                                      # load delay
+# get the address of the specified index + the offset
+# this will be refered to as fft[i+o]
+    addu $a1, $a0, $t4
+# load the real and imaginary values of fft[i+o]
+    lw $s4, ($a1)
+    lw $s5, 4($a1)                                          # load delay
+# multiply the real value of fft[i+o] by the cosine value
+    mult $t0, $s4                                           # load delay
+# load the imaginary value of fft[i]
+    lw $s3, 4($a0)                                          # multiply delay
+# multiply the imaginary part of fft[i+o] by the sine value and subtract it
+# from the previous multiplication
+    msub $s1, $s5                                           # load delay
+# load the real value of fft[i]
+    lw $t2, ($a0)                                           # multiply delay
+# the result in hi is (cosine*Re(fft[i+o])-sine*Im(fft[i+o]))/2
+# lo is the fractional part
+# move both into the general purpose registers
+    mfhi $a2                                                # load delay
+    mflo $s7
+# shift the result over to account for the product being halved
+    sll $a2, $a2, 1
+# shift the fractional part right 30 times to get the two MSBs
+    srl $s7, $s7, 30
+# multiply the real value of fft[i] by the sine value
+    mult $s1, $s4
+# take the two MSB from the previous fractional part and add 1 and shift right
+# 00 -> 0, 01 -> 1, 10 -> 1, 11 -> 2
+    addiu $s7, $s7, 1                                       # multiply delay
+    srl $s7, $s7, 1
+# multiply the imaginary part of fft[i] by the cosine value
+    madd $t0, $s5
+# add the rounded fractional part into the product
+    addu $a2, $a2, $s7                                      # multiply delay
+# the result in hi is (sine*Re(fft[i])+cosine*Im(fft[i]))/2
+# lo is the fractional part
+# move both into the general purpose registers
+    mfhi $a3
+    mflo $s7
+# shift the fractional part right 30 times to get the two MSBs
+    srl $s7, $s7, 30
+# take the two MSB from the previous fractional part and add 1 and shift right
+# 00 -> 0, 01 -> 1, 10 -> 1, 11 -> 2
+    addiu $s7, $s7, 1
+    srl $s7, $s7, 1
+# shift the result over to account for the product being halved
+    sll $a3, $a3, 1
+# add the rounded fractional part into the product
+    addu $a3, $a3, $s7
+# store Re(fft[i])-(cosine*Re(fft[i+o])-sine*Im(fft[i+o])) to Re(fft[i+o])
+    subu $s7, $t2, $a2
+    sw $s7, ($a1)
+# store Im(fft[i])-(sine*Re(fft[i])+cosine*Im(fft[i])) to Im(fft[i+o])
+    subu $s7, $s3, $a3
+    sw $s7, 4($a1)
+# store Re(fft[i])+(cosine*Re(fft[i+o])-sine*Im(fft[i+o])) to Re(fft[i])
+    addu $s7, $t2, $a2
+    sw $s7, ($a0)
+# store Im(fft[i])+(sine*Re(fft[i])+cosine*Im(fft[i])) to Im(fft[i])
+    addu $s7, $s3, $a3
+#
+    addu $t9, $t9, $t5
     sltu $at, $t9, $s6
     bne $at, $0, fft_inner_loop     # if inner loop counter < max value
-    addu $t9, $t9, $t5              # increment inner loop counter(branch delay)
+    sw $s7, 4($a0)                  # increment inner loop counter(branch delay)
     b fft_middle_loop               # branch back to the middle loop
     addiu $t7, $t7, -8              # decrement middle loop count (branch delay)
 fft_inner_loop_last:
@@ -487,11 +554,12 @@ fft_inner_loop_last:
     addu $s7, $t2, $s4
     sw $s7, ($a0)
     addu $s7, $s3, $s5
-    sw $s7, 4($a0)
+    addu $t9, $t9, $t5
     sltu $at, $t9, $s6
     bne $at, $0, fft_inner_loop_last
-    addu $t9, $t9, $t5              # (branch delay)
+    sw $s7, 4($a0)                  # (branch delay)
     srl $t3, $t3, 1                 # halve the lookup index difference
+    or $at, $t6, $0
     bne $0, $t6, fft_outer_loop     # since this is always the last middle loop
     addiu $t6, $t6, -1              # (branch delay)
     li $s1, 8 * (N - 1)             # array index and loop counter
