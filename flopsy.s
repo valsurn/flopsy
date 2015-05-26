@@ -423,15 +423,15 @@ fft_transfer_loop:
 # the sine lookup table overlaps the cosine lookup table and starts an offset
 # of N after the cosine
     la $t1, cos_lookup
-# initialize the ammount to decrement the lookup index
+# initialize the amount to decrement the lookup index
 # each time through the outer loop this will be halved
     li $t3, 2 * N
-# load the ammount to increment the inner loop counter
+# load the amount to increment the inner loop counter
 # this doubles each time through the outer loop
     li $t5, 8
 # initialize the outer loop counter
-# the out loop ends after this is zero
-    li $t6, N_EXPONENT - 1
+# the outer loop ends after this is zero
+    li $t6, N_EXPONENT
 # initialize the inner loop maximum
     li $s6, FFT_SPACE
 
@@ -439,9 +439,9 @@ fft_transfer_loop:
 # pair of elements is appart in the array
 fft_outer_loop:
 
-# set the index offset to the ammount that the inner loop increments by
+# set the index offset to the amount that the inner loop increments by
     or $t4, $t5, $0
-# then double the increment ammount
+# then double the increment amount
     sll $t5, $t5, 1
 # initialize the lookup index
     li $t8, 2 * N
@@ -471,10 +471,10 @@ fft_middle_loop:
 fft_inner_loop:
 
 # get the address of the specified index
-# this will be refered to as fft[i]
+# this will be referred to as fft[i]
     addu $a0, $s2, $t9                                      # load delay
 # get the address of the specified index + the offset
-# this will be refered to as fft[i+o]
+# this will be referred to as fft[i+o]
     addu $a1, $a0, $t4
 # load the real and imaginary values of fft[i+o]
     lw $s4, ($a1)
@@ -531,37 +531,63 @@ fft_inner_loop:
 # store Re(fft[i])+(cosine*Re(fft[i+o])-sine*Im(fft[i+o])) to Re(fft[i])
     addu $s7, $t2, $a2
     sw $s7, ($a0)
-# store Im(fft[i])+(sine*Re(fft[i])+cosine*Im(fft[i])) to Im(fft[i])
+# calculate Im(fft[i])+(sine*Re(fft[i])+cosine*Im(fft[i]))
     addu $s7, $s3, $a3
-#
+# increment the inner loop counter
     addu $t9, $t9, $t5
+# if the inner loop counter is less than the length of the array, loop again
     sltu $at, $t9, $s6
-    bne $at, $0, fft_inner_loop     # if inner loop counter < max value
-    sw $s7, 4($a0)                  # increment inner loop counter(branch delay)
-    b fft_middle_loop               # branch back to the middle loop
-    addiu $t7, $t7, -8              # decrement middle loop count (branch delay)
+    bne $at, $0, fft_inner_loop
+# store Im(fft[i])+(sine*Re(fft[i])+cosine*Im(fft[i])) to Im(fft[i])
+    sw $s7, 4($a0)                                          # branch delay
+# the inner loop is done and this is not the last iteration of the middle loop
+# so decrement the middle loop counter and branch back to the middle loop
+    b fft_middle_loop
+    addiu $t7, $t7, -8                                      # branch delay
+
+# the last fft inner loop is mostly the same as the previous inner loops
+# except the cosine value = 1 which can't be represented the same way as the
+# others
+# no multiplication is necessary, though, since the sine value = 0
 fft_inner_loop_last:
-    addu $a0, $s2, $t9              # special case since cos = 1 & sin = 0
-    addu $a1, $a0, $t4              # 1 is too large to represent w/o changing
-    lw $s5, 4($a1)                  # the scale of the cos lookup table
-    lw $s4, ($a1)                   # (load delay)
-    lw $t2, ($a0)                   # (load delay)
-    lw $s3, 4($a0)                  # (load delay)
-    subu $s7, $t2, $s4              # (load delay)
+
+# get the address of the specified index
+# this will be referred to as fft[i]
+    addu $a0, $s2, $t9
+# get the address of the specified index + the offset
+# this will be referred to as fft[i+o]
+    addu $a1, $a0, $t4
+# load the real and imaginary parts of fft[i] and fft[i+o]
+    lw $s5, 4($a1)
+    lw $s4, ($a1)                                           # load delay
+    lw $t2, ($a0)                                           # load delay
+    lw $s3, 4($a0)                                          # load delay
+# store Re(fft[i])-(1*Re(fft[i+o])-0*Im(fft[i+o])) to Re(fft[i+o])
+    subu $s7, $t2, $s4                                      # load delay
     sw $s7, ($a1)
+# store Im(fft[i])-(0*Re(fft[i])+1*Im(fft[i])) to Im(fft[i+o])
     subu $s7, $s3, $s5
     sw $s7, 4($a1)
+# store Re(fft[i])+(1*Re(fft[i+o])-0*Im(fft[i+o])) to Re(fft[i])
     addu $s7, $t2, $s4
     sw $s7, ($a0)
+# calculate Im(fft[i])+(sine*Re(fft[i])+cosine*Im(fft[i])) to Im(fft[i])
     addu $s7, $s3, $s5
+# increment the inner loop counter
     addu $t9, $t9, $t5
+# if the inner loop counter is less than the length of the array, loop again
     sltu $at, $t9, $s6
     bne $at, $0, fft_inner_loop_last
-    sw $s7, 4($a0)                  # (branch delay)
-    srl $t3, $t3, 1                 # halve the lookup index difference
-    or $at, $t6, $0
-    bne $0, $t6, fft_outer_loop     # since this is always the last middle loop
-    addiu $t6, $t6, -1              # (branch delay)
+# store Im(fft[i])+(0*Re(fft[i])+1*Im(fft[i])) to Im(fft[i])
+    sw $s7, 4($a0)                                          # branch delay
+# since the middle loop is done, decrement the outer loop counter
+# if it equals zero the loop is done, otherwise loop again
+    addiu $t6, $t6, -1
+    bne $0, $t6, fft_outer_loop
+# halve the amount to increment the lookup index
+    srl $t3, $t3, 1                                         # branch delay
+
+#
     li $s1, 8 * (N - 1)             # array index and loop counter
 fft_cordic_rectangular_to_polar_conversion_loop:
     addu $s3, $s1, $s2              # load the data for the conversion
