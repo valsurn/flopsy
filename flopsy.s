@@ -571,7 +571,7 @@ fft_inner_loop_last:
 # store Re(fft[i])+(1*Re(fft[i+o])-0*Im(fft[i+o])) to Re(fft[i])
     addu $s7, $t2, $s4
     sw $s7, ($a0)
-# calculate Im(fft[i])+(sine*Re(fft[i])+cosine*Im(fft[i])) to Im(fft[i])
+# calculate Im(fft[i])+(0*Re(fft[i])+1*Im(fft[i])) to Im(fft[i])
     addu $s7, $s3, $s5
 # increment the inner loop counter
     addu $t9, $t9, $t5
@@ -587,85 +587,142 @@ fft_inner_loop_last:
 # halve the amount to increment the lookup index
     srl $t3, $t3, 1                                         # branch delay
 
-#
-    li $s1, 8 * (N - 1)             # array index and loop counter
-fft_cordic_rectangular_to_polar_conversion_loop:
-    addu $s3, $s1, $s2              # load the data for the conversion
+# initalize the loop counter
+    li $s1, 8 * N
+
+# loop though the fft array and convert each element from rectangular to polar
+cordic_rectangular_to_polar_conversion_loop:
+
+# decrement the loop counter
+    addiu $s1, $s1, -8
+# add the array index to the fft address
+    addu $s3, $s1, $s2
+# load the real and imaginary components
     lw $t1, 4($s3)
-    lw $t0, ($s3)                   # (load delay)
-    bgez $t1, fft_cordic_rectangular_to_polar_check_x   # if y<0 (load delay)
-    li $t3, 0                       # $t3=angle (branch delay)
-    subu $t0, $0, $t0               # x=-x
-    subu $t1, $0, $t1               # y=-y
-    li $t3, 2147483648              # angle=pi
-fft_cordic_rectangular_to_polar_check_x:
-    bgez $t0, fft_cordic_rectangular_to_polar_loop_init # if x<0
-    li $t5, CORDIC_ITERATIONS       # (branch delay)
-    subu $t4, $0, $t0               # temp=-x
-    or $t0, $t1, $0                 # x=y
-    or $t1, $t4, $0                 # y=temp
+    lw $t0, ($s3)                                           # load delay
+
+# if the imaginary component is less than zero,
+    bgez $t1, cordic_rectangular_to_polar_check_real        # load delay
+# set the phase angle to zero
+    or $t3, $0, $0                                          # branch delay
+# since the algorithm only works in the first quadrant, rotate pi radians
+# this is the same as flipping the signs of both components
+    subu $t0, $0, $t0
+    subu $t1, $0, $t1
+# set the angle to pi
+    li $t3, 2147483648
+
+# the imaginary component is now non-negative
+cordic_rectangular_to_polar_check_real:
+# if the real component is less than zero,
+    bgez $t0, cordic_rectangular_to_polar_loop_init
+# load the number of iterations
+    li $t5, CORDIC_ITERATIONS                               # branch delay
+# since the algorithm only works in the first quadrant, rotate pi/2 radians
+# this is the same as x'=y and y'=-x
+    subu $t4, $0, $t0
+    or $t0, $t1, $0
+    or $t1, $t4, $0
+# load pi/2 and add it to the angle
     li $t4, 1073741824
-    addu $t3, $t3, $t4              # angle+=pi/2
-fft_cordic_rectangular_to_polar_loop_init:
-# x and y are now both positive (and have at least one leading 0)
-# shift x and y so that the largest has its left most bit as a 1 and store the
-# number of shifts in $t6
+    addu $t3, $t3, $t4
+
+# the real and imaginary components are now both positive
+# they are now have at least one leading 0
+cordic_rectangular_to_polar_loop_init:
+# shift the real and imaginary components so that the largest has its left most
+# bit as a 1 and store the number of shifts
     or $t6, $t0, $t1
     clz $t6, $t6
     sllv $t0, $t0, $t6
-# shift x and y right 1 and divide by the CORDIC gain (to prevent overflow)
+# divide the real and imaginary components by 2 times the CORDIC gain
+# this is the same as multiplying by a value less than or equal to sqrt(2)/4
+# the actual value depends on the number of iterations.
+# the magnetude can be as high as sqrt(2) times as much as the largest input
+# so by dividing by 2, there will be an extra bit to hold any overflow
     li $t7, HALF_INVERSE_CORDIC_GAIN
     multu $t0, $t7
-    sllv $t1, $t1, $t6              # (multiply delay)
+    sllv $t1, $t1, $t6                                      # multiply delay
     mfhi $t0
     multu $t1, $t7
-# subtract one shift to account for the multiply
-    addiu $t6, $t6, -1              # (multiply delay)
+# subtract one shift to account for the dividing by 2 (guaranteed non negative)
+    addiu $t6, $t6, -1                                      # multiply delay
     mfhi $t1
-# x and y should now be able to handle being multiplied by
-# sqrt(2)*(CORDIC GAIN) then shifted right by $t6 (since $t6>=0)
-    li $t4, 0                       # $t4=i=0
-    la $t2, arctan_lookup           # pointer to current arctan value
-fft_cordic_rectangular_to_polar_loop:
-    bltz $t1, fft_cordic_rectangular_to_polar_y_negative    # if y>=0
-    srlv $t7, $t0, $t4              # $t7=x>>i (branch delay)
-    srlv $t8, $t1, $t4              # $t8=y>>i
-    addu $t0, $t0, $t8              # x=x+(y>>i)
-    subu $t1, $t1, $t7              # y=y-(x>>i)
-    lw $t8, ($t2)                   # $t8 = arctan(2^-i)
-    addiu $t2, $t2, 4               # increment arctan pointer (load delay)
-    addiu $t4, $t4, 1               # increment loop count
+# x and y should now be able to handle being multiplied by at most
+# sqrt(2)*(CORDIC gain) then shifted right the correct ammount
+# initialize the loop counter
+    li $t4, 0
+# load the address of the arctangent lookup table
+    la $t2, arctan_lookup
+
+# perform the CORDIC algorithm
+cordic_rectangular_to_polar_loop:
+
+# check wheather the imaginary component is positive or negative
+    bltz $t1, cordic_rectangular_to_polar_imaginary_negative
+# shift the real value over an ammount equal to the loop counter
+    srlv $t7, $t0, $t4                                      # branch delay
+# the imaginary component is greater than or equal to 0
+# shift the imaginary value over an ammount equal to the loop counter
+    srlv $t8, $t1, $t4
+# add the shifted imaginary value to the real value
+    addu $t0, $t0, $t8
+# subtract the shifted real value from the imaginary value
+    subu $t1, $t1, $t7
+# load the arctan(2^-i) where i is the loop counter
+    lw $t8, ($t2)
+# point to the next arctangent value
+    addiu $t2, $t2, 4                                       # load delay
+# increment the loop counter
+    addiu $t4, $t4, 1
+# if the loop counter is less than the number of iterations, loop again
     slt $at, $t4, $t5
-    bne $at, $0, fft_cordic_rectangular_to_polar_loop  # if i < $t5 loop again
-    addu $t3, $t3, $t8              # angle=angle+arctan(2^-i) (branch delay)
-    b fft_cordic_rectangular_to_polar_end   # done looping
-    srlv $t0, $t0, $t6              # shift x back to its original magnitude
-fft_cordic_rectangular_to_polar_y_negative:
-    subu $t8, $0, $t1               # $t8=-y (positive)
-    srlv $t8, $t8, $t4              # $t8=(-y)>>i
-    addu $t0, $t0, $t8              # x=x+((-y)>>i)
-    addu $t1, $t1, $t7              # y=y+(x>>i)
-    lw $t8, ($t2)                   # $t8 = arctan(2^-i)
-    addiu $t2, $t2, 4               # increment arctan pointer (load delay)
-    addiu $t4, $t4, 1               # increment loop count
+    bne $at, $0, cordic_rectangular_to_polar_loop
+# add the arctan(2^-i) to the angle
+    addu $t3, $t3, $t8                                      # branch delay
+# if the loop counter is greater than or equal,
+# shift the real component back to its original magnetude and go to the end
+    b cordic_rectangular_to_polar_end
+    srlv $t0, $t0, $t6                                      # branch delay
+
+# if the imaginary component is negative
+cordic_rectangular_to_polar_imaginary_negative:
+
+# make the imaginary component positive
+    subu $t8, $0, $t1
+# shift the imaginary value over an ammount equal to the loop counter
+    srlv $t8, $t8, $t4
+# add the shifted imaginary value to the real value (essentally subtraction)
+    addu $t0, $t0, $t8
+# add the shifted real value to the imaginary value
+    addu $t1, $t1, $t7
+# load the arctan(2^-i) where i is the loop counter
+    lw $t8, ($t2)
+# point to the next arctangent value
+    addiu $t2, $t2, 4                                       # load delay
+# increment the loop counter
+    addiu $t4, $t4, 1
+# if the loop counter is less than the number of iterations, loop again
     slt $at, $t4, $t5
-    bne $at, $0, fft_cordic_rectangular_to_polar_loop  # if i < $t5 loop again
-    subu $t3, $t3, $t8              # angle=angle-arctan(2^-i) (branch delay)
-    srlv $t0, $t0, $t6              # shift x back to its original magnitude
-fft_cordic_rectangular_to_polar_end:
-    srlv $t0, $t0, $s0          # shift the value back to its proper magnitude
-    sw $t0, ($s3)               # store the magnitude back in the array
-    sw $t3, 4($s3)              # store the angle back in the array
-    bne $0, $s1, fft_cordic_rectangular_to_polar_conversion_loop
-    addiu $s1, $s1, -8
+    bne $at, $0, cordic_rectangular_to_polar_loop
+# subtract the arctan(2^-i) from the angle
+    subu $t3, $t3, $t8                                      # branch delay
+# shift the real component back to its original magnetude
+    srlv $t0, $t0, $t6
 
+# finish manipuulating the values and store them back into the fft array
+cordic_rectangular_to_polar_end:
 
+# shift the value back to it's original magnitude in the sample arrays
+    srlv $t0, $t0, $s0
+# store the magnitude and angle back into the fft array
+    sw $t0, ($s3)
+# if the loop counter doesn't equal zero, loop again
+    bne $s1, $0, cordic_rectangular_to_polar_conversion_loop
+    sw $t3, 4($s3)                                          # branch delay
 
-
-
-
-
-    lw $s0, ($sp)                   # pop the s registers back
+# pop the s registers off the stack
+    lw $s0, ($sp)
     lw $s1, 4($sp)
     lw $s2, 8($sp)
     lw $s3, 12($sp)
@@ -673,8 +730,10 @@ fft_cordic_rectangular_to_polar_end:
     lw $s5, 20($sp)
     lw $s6, 24($sp)
     lw $s7, 28($sp)
+
     jr $ra                          # return
     addiu $sp, $sp, 32
+
 ################################################################################
 # timer_isr
 ################################################################################
